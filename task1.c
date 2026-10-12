@@ -83,8 +83,7 @@ int main(int argc, char **argv)
 	
 	
 	int N  = atoi(argv[1]);
-    // int MB = 2;
-    // int NB = 2;
+
     int zero = 0;
 	int dims[2] = {0, 0};
 	int myrow, mycol;
@@ -115,10 +114,6 @@ int main(int argc, char **argv)
 	int mloc = numroc_(&N, &MB, &myrow, &zero, &nprow);
 	int nloc = numroc_(&N, &NB, &mycol, &zero, &npcol);
 
-	
-	
-	printf("$");
-		fflush(stdout);
 
 	int descA[9], descB[9], descC[9], info;
 	int lld = (mloc > 0) ? mloc : 1;
@@ -126,11 +121,7 @@ int main(int argc, char **argv)
 	descinit_(descB, &N, &N, &MB, &NB, &zero, &zero, &context, &lld, &info );
 	descinit_(descC, &N, &N, &MB, &NB, &zero, &zero, &context, &lld, &info );
 	
-	
-	printf(")");
-		fflush(stdout);
 
-	
 	double *A = (double*) malloc(mloc * nloc * sizeof(double));
     double *B = (double*) malloc(mloc * nloc * sizeof(double));
     double *C = (double*) malloc(mloc * nloc * sizeof(double));
@@ -141,8 +132,6 @@ int main(int argc, char **argv)
 	Cblacs_get(-1, 0, &curr0);
 	Cblacs_gridinit(&curr0, &order, 1, 1);
 	
-	//printf("*");
-		//fflush(stdout);
 	int descA0[9] = {0};
 	int descB0[9] = {0};
 	int descC0[9] = {0};
@@ -179,21 +168,13 @@ int main(int argc, char **argv)
 	}
 
 	int i = 1;
-	//printf("!");
-		//fflush(stdout);
 	pdgemr2d_(&N, &N, a_full, &i, &i, descA0, A, &i, &i, descA, &context);
 	pdgemr2d_(&N, &N, b_full, &i, &i, descB0, B, &i, &i, descB, &context);
 	
-	
-	//printf("1!");
-		//fflush(stdout);
 	if (a_full) free(a_full);
 	if (b_full) free(b_full);
 	// if (curr0 >= 0) Cblacs_gridexit(curr0);  
 	
-	
-	//printf("2!");
-		//fflush(stdout);
 	for (int p = 0; p < nprocs; p++) {
 		MPI_Barrier(MPI_COMM_WORLD);
 		if (myrank == p) {
@@ -205,9 +186,7 @@ int main(int argc, char **argv)
 	}
 	
     MPI_Barrier(MPI_COMM_WORLD);
-	
-	printf("3!");
-		fflush(stdout);
+
 	char transa = 'N', transb = 'N';
 	double alpha = 1.0, beta = 0.0;
 	
@@ -218,44 +197,33 @@ int main(int argc, char **argv)
 	
     MPI_Barrier(MPI_COMM_WORLD);
 	
-	printf("4!");
-		fflush(stdout);
-	//int descC0[9] = {0};
 	double *c_full = NULL;
 
 	if (curr0 >= 0) {
-		//descinit_(descC0, &N, &N, &Nb, &Nb, &zero, &zero, &curr0, &N, &info0);
 		c_full = (double*) malloc(N * N * sizeof(double));
 	} else {
 		descC0[1] = -1; 
 	}
 	
-	printf("5!");
-		fflush(stdout);
 	
     MPI_Barrier(MPI_COMM_WORLD);
 	pdgemr2d_(&N, &N, C, &i, &i, descC, c_full, &i, &i, descC0, &context);
 	
     MPI_Barrier(MPI_COMM_WORLD);
-	printf("6!");
-		fflush(stdout);
+    
+	fflush(stdout);
 	if (curr0 >= 0) {
 		printf("=== Full C ===\n");
 		print_matrix(c_full, N, N);
 		free(c_full);
 	}
 
-		fflush(stdout);
-	printf("7!");
-		fflush(stdout);
+	fflush(stdout);
 	
 	free( A );
 	free( B );
 	free( C );
-	
-	printf("8!");
-		fflush(stdout);
-	
+		
 	if (curr0 >= 0) Cblacs_gridexit(curr0);
 	Cblacs_gridexit(context);
 	Cblacs_exit(0);
