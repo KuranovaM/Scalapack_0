@@ -130,12 +130,22 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 	}
 }
 
+//void br_matr(double complex * a, int N_a, int M_a, int N_b, int N_b, int bs){
+	
+	
+//	}
 
-void mult_ab(double complex * a, double complex * b, double complex * c, int N_a, int M_a, int N_b, int N_b, int bs){
-	int descA[9], descB[9], descC[9], info;
-    descinit_(descA, &M_a, &N_a, &bs, &bs, &zero, &zero, &context, &lld_A, &info);
-    descinit_(descB, &M_b, &N_b, &bs, &bs, &zero, &zero, &context, &lld_B, &info);
-    descinit_(descC, &M_a, &N_b, &bs, &bs, &zero, &zero, &context, &lld_C, &info);
+void mult_ab(double complex * A, double complex * B, double complex * C, int M_a, int N_a, int N_b, int * descA, int * descB, int * descC, int info){
+	char transa = 'N', transb = 'N';
+	double alpha = 1.0, beta = 0.0;
+    double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
+    int i  = 1;
+    int M_b = N_a;
+    
+    MPI_Barrier(MPI_COMM_WORLD);
+    pzgemm_(&transa, &transb, &M_a, &N_b, &N_a, &alpha, (double complex*)A, &i, &i, descA,
+            (double complex*)B, &i, &i, descB, &beta, (double complex*)C, &i, &i, descC);
+    MPI_Barrier(MPI_COMM_WORLD);
 	
 	}
 
