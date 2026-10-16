@@ -94,8 +94,7 @@ void read_H(FILE *f, double complex *arr, int N){
 
 void read_ro(FILE *f, double complex *arr, int N, int type){
     switch (type) {
-
-		case 3: {
+		case 2: {
 			for (int i = 0; i < N; ++i) {
 				for (int j = 0; j < N; ++j) {
 					double complex z;
@@ -107,7 +106,7 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 			break;
 		}
 
-		case 2: {
+		case 1: {
 			for (int i = 0; i < N; i ++){
 				fscanf(f, "%lf %lf", &x, &y);    
 				arr[i] = x + I * y;
@@ -116,10 +115,13 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 			break;
 		}
 
-		case 1: {
-			
-			fscanf(f, "%lf %lf", &x, &y); 
-			arr[0] = x + I * y;
+		case 0: {
+			int k;
+			fscanf(f, "%d", &i); 
+			for (int i = 0; i < N * N; i ++) {
+				arr[i] = 0;
+				}
+			arr[k *  N][k] = 1;
 			break;
 		}
 
@@ -156,8 +158,99 @@ int main(int argc, char **argv)
 	int myrank, nprocs;
 	MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 	MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+	
+	int N = atoi(argv[1]);
+	char * file_ro = argv[2];
+	char *end;
+	double dT = strtod(argv[3], &end);
+	char * file_H = argv[4];
+	int n = atoi(argv[5]);
+	
+	
+	int zero = 0;
+	int dims[2] = {0, 0};
+	int myrow, mycol;
+	int nprow, npcol;
+	MPI_Dims_create(nprocs, 2, dims);
+	nprow = dims[0];
+	npcol = dims[1];
+	int context;
+    Cblacs_get(-1, 0, &context);
+
+	char order = 'R';
+	Cblacs_gridinit( &context, &order, nprow, npcol);
+	Cblacs_gridinfo( context, &nprow, &npcol, &myrow, &mycol);
+	
+	
+	int mode = 0;
+	
+	if (myrank == 0){
+		char ch;
+		printf("Choose mode: [s]calar [v]ector [m]atrix: \n");
+		fflush(stdout);
+		if (scanf(" %c", &ch) != 1) ch = 's';
+		if (ch == 'v' || ch == 'V') mode = 1;
+		else if (ch == 'm' || ch == 'M') mode = 2;
+		else mode = 0;
+	}
+	MPI_Bcast(&mode, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	double complex * ro_arr = NULL;
+	
+	if (myrank == 0) {
+		ro_arr = (double complex *) malloc(sizeof(double complex) * N * N);
+		FILE *f = fopen(file_ro, "r");
+		if (f == NULL) {
+			printf("Не удалось открыть %s: %s\n", file_ro, strerror(errno));
+			return -1;
+		}
+		read_ro(f, ro_arr, N, mode);
+		fclose(f);
+	}
+	
+	//double complex * local_ro_arr
+	int mb = 64, nb = 64; // поменять потом!
+	int i = 1, info;
+	
+	int descRo[9];
+	int lld = numroc_(&N, &mb, &myrow, &zero, &nprow);
+	lld = (lld > 1) ? lld : 1;
+	descinit_(descRo, &N, &N, &mb, &nb, &zero, &zero, &context, &lld, &info);
+	
+	int local_rows = numroc_(&N, &mb, &myrow, &izero, &nprow);
+	int local_cols = numroc_(&N, &nb, &mycol, &izero, &npcol);
+	double complex *ro_local = (double complex *)(lld * local_cols * sizeof(double complex));
+	
+
+	if (mode == 1) {
+		int descPsi_serial[9];
+		int mb_full = N, nb_full = 1;
+		int lld_full = (myrank == 0) ? N : 1;
+		descinit_(descPsi_serial, &N, &i, &mb_full, &nb_full,
+				  &zero, &zero, &context, &lld_full, &info);
+				  
+		int descPsi[9];
+		int lld_psi = numroc_(&N, &mb, &myrow, &izero, &nprow);
+		lld_psi = (lld_psi > 1) ? lld_psi : 1;
+		descinit_(descPsi, &N, &i, &mb, &i,
+				  &zero, &zero, &contex, &lld_psi, &info);
+		
+		int local_rows_psi = numroc_(&N, &mb, &myrow, &izero, &nprow);
+		int buf_psi = (local_rows_psi > 0) ? local_rows_psi : 1;
+		double complex *psi_local = malloc(sizeof(double complex) * buf_psi);
+		for (int i = 0; i < buf_psi; i++) psi_local[i] = 0.0 + 0.0 * I;
+		
+		pzgemr2d_(&N, &i, ro_arr, &i, &i, descPsi_serial, 
+				  psi_local, &i, &i, descPsi, &contex);
+		
+	}
+	else {
+		
+	}
+	
+	
 	//srand(time(NULL) + myrank);
-	int mode = 0;   // 0 = simple, 1 = random, 2 = full
+	c   // 0 = simple, 1 = random, 2 = full
 	int pr = atoi(argv[6]);
 
 	if (myrank == 0){
