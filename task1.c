@@ -84,7 +84,7 @@ void read_H(FILE *f, double complex *arr, int N){
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             double complex z;
-            fread(&z, sizeof(double complex), 1, f)
+            fread(&z, sizeof(double complex), 1, f);
             arr[j * N + i] = z;
         }
     }
@@ -93,11 +93,11 @@ void read_H(FILE *f, double complex *arr, int N){
 
 
 void read_ro(FILE *f, double complex *arr, int N, int type){
+	double x, y;
     switch (type) {
 		case 2: {
 			for (int i = 0; i < N; ++i) {
 				for (int j = 0; j < N; ++j) {
-					double complex z;
 					double x, y;
 					fscanf(f, "%lf %lf", &x, &y);
 					arr[j * N + i] = x + I * y;
@@ -117,11 +117,11 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 
 		case 0: {
 			int k;
-			fscanf(f, "%d", &i); 
+			fscanf(f, "%d", &k); 
 			for (int i = 0; i < N * N; i ++) {
 				arr[i] = 0;
 				}
-			arr[k *  N][k] = 1;
+			arr[k *  N + k] = 1;
 			break;
 		}
 
@@ -139,7 +139,6 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 
 void mult_ab(double complex * A, double complex * B, double complex * C, int M_a, int N_a, int N_b, int * descA, int * descB, int * descC, int info){
 	char transa = 'N', transb = 'N';
-	double alpha = 1.0, beta = 0.0;
     double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
     int i  = 1;
     int M_b = N_a;
@@ -217,10 +216,10 @@ int main(int argc, char **argv)
 	lld = (lld > 1) ? lld : 1;
 	descinit_(descRo, &N, &N, &mb, &nb, &zero, &zero, &context, &lld, &info);
 	
-	int local_rows = numroc_(&N, &mb, &myrow, &izero, &nprow);
-	int local_cols = numroc_(&N, &nb, &mycol, &izero, &npcol);
-	double complex *ro_local = (double complex *)(lld * local_cols * sizeof(double complex));
-	
+	int local_rows = numroc_(&N, &mb, &myrow, &zero, &nprow);
+	int local_cols = numroc_(&N, &nb, &mycol, &zero, &npcol);
+	//double complex *ro_local = (double complex *)malloc(lld * local_cols * sizeof(double complex));
+	double complex *ro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
 
 	if (mode == 1) {
 		int descPsi_serial[9];
@@ -228,25 +227,54 @@ int main(int argc, char **argv)
 		int lld_full = (myrank == 0) ? N : 1;
 		descinit_(descPsi_serial, &N, &i, &mb_full, &nb_full,
 				  &zero, &zero, &context, &lld_full, &info);
-				  
-		int descPsi[9];
-		int lld_psi = numroc_(&N, &mb, &myrow, &izero, &nprow);
+
+		int descPsi_row[9];
+		int lld_psi = numroc_(&N, &mb, &myrow, &zero, &nprow);
 		lld_psi = (lld_psi > 1) ? lld_psi : 1;
-		descinit_(descPsi, &N, &i, &mb, &i,
-				  &zero, &zero, &contex, &lld_psi, &info);
+		descinit_(descPsi_row, &N, &i, &mb, &i,
+				  &zero, &zero, &context, &lld_psi, &info);
+				  
+		int descPsi_col[9];
+		lld_psi = numroc_(&N, &nb, &mycol, &zero, &npcol);
+		lld_psi = (lld_psi > 1) ? lld_psi : 1;
+		descinit_(descPsi_col, &N, &i, &nb, &i,
+				  &zero, &zero, &context, &lld_psi, &info);
+
+		int nrow_local = numroc_(&N, &mb, &myrow, &zero, &nprow);
+		double complex *psi_local_row = (double complex *)calloc(
+			(nrow_local > 0 ? nrow_local : 1), sizeof(double complex));
+		int ncol_local = numroc_(&N, &nb, &mycol, &zero, &npcol);
+		double complex *psi_local_col = (double complex *)calloc(
+			(ncol_local > 0 ? ncol_local : 1), sizeof(double complex));
+
+		pzgemr2d_(&N, &i, ro_arr, &i, &i, descPsi_serial,
+				  psi_local_row, &i, &i, descPsi_row, &context);
 		
-		int local_rows_psi = numroc_(&N, &mb, &myrow, &izero, &nprow);
-		int buf_psi = (local_rows_psi > 0) ? local_rows_psi : 1;
-		double complex *psi_local = malloc(sizeof(double complex) * buf_psi);
-		for (int i = 0; i < buf_psi; i++) psi_local[i] = 0.0 + 0.0 * I;
-		
-		pzgemr2d_(&N, &i, ro_arr, &i, &i, descPsi_serial, 
-				  psi_local, &i, &i, descPsi, &contex);
-		
+		pzgemr2d_(&N, &i, ro_arr, &i, &i, descPsi_serial,
+				  psi_local_col, &i, &i, descPsi_col, &context);
+
+		double complex alpha = 1.0 + 0.0 * I;
+		pzgerc_(&N, &N, &alpha,
+				psi_local_row, &i, &i, descPsi_row,
+				psi_local_col, &i, &i, descPsi_col,
+				ro_local,  &i, &i, descRo);
+
+		free(psi_local_col);
+		free(psi_local_row);
 	}
 	else {
 		
 	}
+	if (myrank == 0) free(ro_arr);
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	
 	
 	//srand(time(NULL) + myrank);
