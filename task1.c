@@ -263,7 +263,16 @@ int main(int argc, char **argv)
 		free(psi_local_row);
 	}
 	else {
-		
+		int descRo_serial[9];
+		int mb_full = N, nb_full = N;
+		int lld_full = (myrank == 0) ? N : 1;
+		descinit_(descRo_serial, &N, &N, &mb_full, &nb_full,
+				  &zero, &zero, &context, &lld_full, &info);
+
+		pzgemr2d_(&N, &N,
+				  ro_full,  &i, &i, descRo_serial,
+				  ro_local, &i, &i, descRo,
+				  &context);
 	}
 	if (myrank == 0) free(ro_arr);
 	
