@@ -4,6 +4,9 @@
 #include <time.h>
 #include <math.h>
 #include <complex.h>
+#include <string.h>
+#include <errno.h>
+
 
 
 typedef enum { TYPE_REAL, TYPE_COMPLEX } mattype_t;
@@ -31,6 +34,16 @@ extern void pdgemr2d_(int*, int*, double*, int*, int*, int*,
                       double*, int*, int*, int*, int*);
 extern void pzgemr2d_(int*, int*, double complex*, int*, int*, int*,
                       double complex*, int*, int*, int*, int*);
+                      
+
+extern void pzgerc_(int *m, int *n, double complex *alpha, 
+                    double complex *x, int *ix, int *jx, int *descx, 
+                    double complex *y, int *iy, int *jy, int *descy, 
+                    double complex *a, int *ia, int *ja, int *desca);
+
+extern void infog2l_(int *grindx, int *gcindx, int *desc, 
+                     int *nprow, int *npcol, int *myrow, int *mycol, 
+                     int *lrindx, int *lcindx, int *rsrc, int *csrc);
 
 
 
@@ -95,6 +108,7 @@ void read_H(FILE *f, double complex *arr, int N){
 void read_ro(FILE *f, double complex *arr, int N, int type){
 	double x, y;
     switch (type) {
+		/*
 		case 2: {
 			for (int i = 0; i < N; ++i) {
 				for (int j = 0; j < N; ++j) {
@@ -104,7 +118,7 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 				}
 			}
 			break;
-		}
+		}*/
 
 		case 1: {
 			for (int i = 0; i < N; i ++){
@@ -118,10 +132,10 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 		case 0: {
 			int k;
 			fscanf(f, "%d", &k); 
-			for (int i = 0; i < N * N; i ++) {
-				arr[i] = 0;
-				}
-			arr[k *  N + k] = 1;
+			//for (int i = 0; i < N * N; i ++) {
+			//	arr[i] = 0;
+			//	}
+			arr[0] = k + I * 0;
 			break;
 		}
 
@@ -132,10 +146,6 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 	}
 }
 
-//void br_matr(double complex * a, int N_a, int M_a, int N_b, int N_b, int bs){
-	
-	
-//	}
 
 void mult_ab(double complex * A, double complex * B, double complex * C, int M_a, int N_a, int N_b, int * descA, int * descB, int * descC, int info){
 	char transa = 'N', transb = 'N';
@@ -149,6 +159,7 @@ void mult_ab(double complex * A, double complex * B, double complex * C, int M_a
     MPI_Barrier(MPI_COMM_WORLD);
 	
 	}
+	
 
 
 int main(int argc, char **argv)
@@ -196,7 +207,7 @@ int main(int argc, char **argv)
 	
 	double complex * ro_arr = NULL;
 	
-	if (myrank == 0) {
+	if ((myrank == 0) && (mode < 2)) {
 		ro_arr = (double complex *) malloc(sizeof(double complex) * N * N);
 		FILE *f = fopen(file_ro, "r");
 		if (f == NULL) {
@@ -208,7 +219,7 @@ int main(int argc, char **argv)
 	}
 	
 	//double complex * local_ro_arr
-	int mb = 64, nb = 64; // поменять потом!
+	int mb = 2, nb = 2; // поменять потом!
 	int i = 1, info;
 	
 	int descRo[9];
@@ -219,303 +230,128 @@ int main(int argc, char **argv)
 	int local_rows = numroc_(&N, &mb, &myrow, &zero, &nprow);
 	int local_cols = numroc_(&N, &nb, &mycol, &zero, &npcol);
 	//double complex *ro_local = (double complex *)malloc(lld * local_cols * sizeof(double complex));
-	double complex *ro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+	double complex *ro_local = NULL;
 
 	if (mode == 1) {
-		int descPsi_serial[9];
-		int mb_full = N, nb_full = 1;
-		int lld_full = (myrank == 0) ? N : 1;
-		descinit_(descPsi_serial, &N, &i, &mb_full, &nb_full,
-				  &zero, &zero, &context, &lld_full, &info);
-
-		int descPsi_row[9];
-		int lld_psi = numroc_(&N, &mb, &myrow, &zero, &nprow);
-		lld_psi = (lld_psi > 1) ? lld_psi : 1;
-		descinit_(descPsi_row, &N, &i, &mb, &i,
-				  &zero, &zero, &context, &lld_psi, &info);
-				  
-		int descPsi_col[9];
-		lld_psi = numroc_(&N, &nb, &mycol, &zero, &npcol);
-		lld_psi = (lld_psi > 1) ? lld_psi : 1;
-		descinit_(descPsi_col, &N, &i, &nb, &i,
-				  &zero, &zero, &context, &lld_psi, &info);
-
-		int nrow_local = numroc_(&N, &mb, &myrow, &zero, &nprow);
-		double complex *psi_local_row = (double complex *)calloc(
-			(nrow_local > 0 ? nrow_local : 1), sizeof(double complex));
-		int ncol_local = numroc_(&N, &nb, &mycol, &zero, &npcol);
-		double complex *psi_local_col = (double complex *)calloc(
-			(ncol_local > 0 ? ncol_local : 1), sizeof(double complex));
-
-		pzgemr2d_(&N, &i, ro_arr, &i, &i, descPsi_serial,
-				  psi_local_row, &i, &i, descPsi_row, &context);
+		ro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+		int M_a  = N;
+		int N_a = 1;
+		int N_b = N;
+		int M_b = 1;
+		size_t elsize = sizeof(double complex);
+		int bs = mb;
 		
-		pzgemr2d_(&N, &i, ro_arr, &i, &i, descPsi_serial,
-				  psi_local_col, &i, &i, descPsi_col, &context);
+		
+		
+		int mloc_A = numroc_(&M_a, &bs, &myrow, &zero, &nprow);
+		int nloc_A = numroc_(&N_a, &bs, &mycol, &zero, &npcol);
+		int lld_A  = (mloc_A > 0) ? mloc_A : 1;
 
-		double complex alpha = 1.0 + 0.0 * I;
-		pzgerc_(&N, &N, &alpha,
-				psi_local_row, &i, &i, descPsi_row,
-				psi_local_col, &i, &i, descPsi_col,
-				ro_local,  &i, &i, descRo);
+		int mloc_B = numroc_(&M_b, &bs, &myrow, &zero, &nprow);
+		int nloc_B = numroc_(&N_b, &bs, &mycol, &zero, &npcol);
+		int lld_B  = (mloc_B > 0) ? mloc_B : 1;
 
-		free(psi_local_col);
-		free(psi_local_row);
-	}
-	else {
-		int descRo_serial[9];
-		int mb_full = N, nb_full = N;
-		int lld_full = (myrank == 0) ? N : 1;
-		descinit_(descRo_serial, &N, &N, &mb_full, &nb_full,
-				  &zero, &zero, &context, &lld_full, &info);
-
-		pzgemr2d_(&N, &N,
-				  ro_full,  &i, &i, descRo_serial,
-				  ro_local, &i, &i, descRo,
-				  &context);
-	}
-	if (myrank == 0) free(ro_arr);
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	//srand(time(NULL) + myrank);
-	c   // 0 = simple, 1 = random, 2 = full
-	int pr = atoi(argv[6]);
-
-	if (myrank == 0){
-		char ch;
-		printf("Choose mode: [r]andom / [s]imple / [f]ile: \n");
-		fflush(stdout);
-		if (scanf(" %c", &ch) != 1) ch = 's';
-		if (ch == 'r' || ch == 'R') mode = 1;
-		else if (ch == 'f' || ch == 'F') mode = 2;
-		else mode = 0;
-	}
-	MPI_Bcast(&mode, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-
-	int M_a  = atoi(argv[1]);
-	int N_a = atoi(argv[2]);
-	int N_b = atoi(argv[3]);
-	int M_b = N_a;
-
-	char t = argv[4][0];
-	mattype_t type = TYPE_REAL;
-	if (t == 'c' || t == 'C') type = TYPE_COMPLEX;
-	else type = TYPE_REAL;
-	size_t elsize = (type == TYPE_COMPLEX) ? sizeof(double complex) : sizeof(double);
-
-    int zero = 0;
-	int dims[2] = {0, 0};
-	int myrow, mycol;
-	int nprow, npcol;
-
-	MPI_Dims_create(nprocs, 2, dims);
-	nprow = dims[0];
-	npcol = dims[1];
-
-	int context;
-    Cblacs_get(-1, 0, &context);
-
-	char order = 'R';
-	Cblacs_gridinit( &context, &order, nprow, npcol);
-	Cblacs_gridinfo( context, &nprow, &npcol, &myrow, &mycol);
-
-	int maxdim = M_a;
-    if (N_a > maxdim) maxdim = N_a;
-    if (N_b > maxdim) maxdim = N_b;
-    int maxproc = (nprow > npcol) ? nprow : npcol;
-    int bs = (maxdim + maxproc - 1) / maxproc;
-    if (bs < 1) bs = 1;
-
-    if (myrank == 0){
-        printf("Grid %dx%d, A %dx%d, B %dx%d, block %dx%d (square)\n",
-               nprow, npcol, M_a, N_a, M_b, N_b, bs, bs);
-		fflush(stdout);
-	}
-
-    int mloc_A = numroc_(&M_a, &bs, &myrow, &zero, &nprow);
-    int nloc_A = numroc_(&N_a, &bs, &mycol, &zero, &npcol);
-    int lld_A  = (mloc_A > 0) ? mloc_A : 1;
-
-    int mloc_B = numroc_(&M_b, &bs, &myrow, &zero, &nprow);
-    int nloc_B = numroc_(&N_b, &bs, &mycol, &zero, &npcol);
-    int lld_B  = (mloc_B > 0) ? mloc_B : 1;
-
-    int mloc_C = numroc_(&M_a, &bs, &myrow, &zero, &nprow);
-    int nloc_C = numroc_(&N_b, &bs, &mycol, &zero, &npcol);
-    int lld_C  = (mloc_C > 0) ? mloc_C : 1;
-
-    int descA[9], descB[9], descC[9], info;
-    descinit_(descA, &M_a, &N_a, &bs, &bs, &zero, &zero, &context, &lld_A, &info);
-    descinit_(descB, &M_b, &N_b, &bs, &bs, &zero, &zero, &context, &lld_B, &info);
-    descinit_(descC, &M_a, &N_b, &bs, &bs, &zero, &zero, &context, &lld_C, &info);
-
-    void *A = malloc(mloc_A * nloc_A * elsize);// sizeof(double));
-    void *B = malloc(mloc_B * nloc_B * elsize);// sizeof(double));
-    void *C = malloc(mloc_C * nloc_C * elsize);// sizeof(double));
-	//NB = min(NB, MB);
-	//MB = min(NB, MB);
-	if (myrank == 0){
-		//printf("Grid: %d x %d, M=%d, N=%d, MB=%d, NB=%d\n",
-		//	   nprow, npcol,M, N, MB, NB);
-		fflush(stdout);
-	}
-
-    void *a_full = NULL;
-	void *b_full = NULL;
-	void *c_full = NULL;
-	int curr0;
-	Cblacs_get(-1, 0, &curr0);
-	Cblacs_gridinit(&curr0, &order, 1, 1);
-
-	int descA0[9] = {0};
-	int descB0[9] = {0};
-	int descC0[9] = {0};
-	int info0;
-	// int Nb = N;
-	// int Mb = M;
-
-	if (curr0 >= 0) {
-		descinit_(descA0, &M_a, &N_a, &M_a, &N_a, &zero, &zero, &curr0, &M_a, &info0);
-        descinit_(descB0, &M_b, &N_b, &M_b, &N_b, &zero, &zero, &curr0, &M_b, &info0);
-        descinit_(descC0, &M_a, &N_b, &M_a, &N_b, &zero, &zero, &curr0, &M_a, &info0);
-
-        a_full = malloc(M_a * N_a * elsize);//  sizeof(double));
-        b_full = malloc(M_b * N_b * elsize);//  sizeof(double));
-        c_full = malloc(M_a * N_b * elsize);
-        // c_full = malloc(M_a * N_b * sizeof(double));
-
-		if (mode == 0) {
-            if (type == TYPE_REAL) {
-                gen_ones((double*)a_full, M_a, N_a, 1.0);
-                gen_ones((double*)b_full, M_b, N_b, 2.0);
-            }
-            else {
-                gen_ones_complex((double complex*)a_full, M_a, N_a, 1.0 + 0.0*I);
-                gen_ones_complex((double complex*)b_full, M_b, N_b, 2.0 + 0.0*I);
-            }
-        }
-        else if (mode == 1) {
-            if (type == TYPE_REAL) {
-                gen((double*)a_full, (long int)M_a * N_a);
-                gen((double*)b_full, (long int)M_b * N_b);
-            }
-            else {
-                gen_complex((double complex*)a_full, (long int)M_a * N_a);
-                gen_complex((double complex*)b_full, (long int)M_b * N_b);
-            }
-        }
-        else {
-            FILE *f = fopen(argv[5], "r");
-            //for (int k = 0; k < M_a*N_a; k++) fscanf(f, "%lf", &a_full[k]);
-            //for (int k = 0; k < M_b*N_b; k++) fscanf(f, "%lf", &b_full[k]);
-            if (type == TYPE_REAL) {
-                read_real(f, (double*)a_full,(double*)b_full, (long int)M_a, (long int)N_a, (long int)N_b);
-            }
-            else {
-                read_complex(f, (double complex*)a_full, (double complex*)b_full, (long int)M_a, (long int)N_a, (long int)N_b);
-            }
-            fclose(f);
-        }
-	} else {
-		descA0[1] = -1;
-		descB0[1] = -1;
-		descC0[1] = -1;
-	}
-
-	int i = 1;
-	if (type == TYPE_REAL) {
-		pdgemr2d_(&M_a, &N_a, a_full, &i, &i, descA0, A, &i, &i, descA, &context);
-		pdgemr2d_(&M_b, &N_b, b_full, &i, &i, descB0, B, &i, &i, descB, &context);
-	}
-	else {
-        pzgemr2d_(&M_a, &N_a, (double complex*)a_full, &i, &i, descA0,
-                  (double complex*)A, &i, &i, descA, &context);
-        pzgemr2d_(&M_b, &N_b, (double complex*)b_full, &i, &i, descB0,
-                  (double complex*)B, &i, &i, descB, &context);
-    }
-
-	if (a_full) free(a_full);
-	if (b_full) free(b_full);
-	// if (curr0 >= 0) Cblacs_gridexit(curr0);
-
-	if (pr)
-		for (int p = 0; p < nprocs; p++) {
-			MPI_Barrier(MPI_COMM_WORLD);
-			if (myrank == p) {
-				printf("=== rank %d (row=%d, col=%d) ===\n", myrank, myrow, mycol);
-				//printf("A:\n"); print_matrix(A, mloc_A, nloc_A);
-				//printf("B:\n"); print_matrix(B, mloc_B, nloc_B);
-				// printf("C:\n"); print_matrix(C, mloc, nloc);
-			}
+		void *A = malloc(mloc_A * nloc_A * elsize);// sizeof(double));
+		void *B = malloc(mloc_B * nloc_B * elsize);// sizeof(double));
+		
+		int descA[9], descB[9], descC[9], info;
+		descinit_(descA, &M_a, &N_a, &bs, &bs, &zero, &zero, &context, &lld_A, &info);
+		descinit_(descB, &M_b, &N_b, &bs, &bs, &zero, &zero, &context, &lld_B, &info);
+				
+		int curr0;
+		Cblacs_get(-1, 0, &curr0);
+		Cblacs_gridinit(&curr0, &order, 1, 1);
+		int descA0[9] = {0};
+		int descB0[9] = {0};
+		int descC0[9] = {0};
+		int info0;
+		if (myrank == 0){
+			printf("Grid %dx%d, A %dx%d, B %dx%d, block %dx%d (square)\n",
+				   nprow, npcol, M_a, N_a, M_b, N_b, bs, bs);
+			fflush(stdout);
 		}
 
-    MPI_Barrier(MPI_COMM_WORLD);
+		if (curr0 >= 0) {
+			descinit_(descA0, &M_a, &N_a, &M_a, &N_a, &zero, &zero, &curr0, &M_a, &info0);
+			descinit_(descB0, &M_b, &N_b, &M_b, &N_b, &zero, &zero, &curr0, &M_b, &info0);
+		} else {
+			descA0[1] = -1;  
+			descB0[1] = -1;
+			descC0[1] = -1;
+		}
 
-	char transa = 'N', transb = 'N';
-	double alpha = 1.0, beta = 0.0;
+		int i = 1;
+		pzgemr2d_(&M_a, &N_a, (double complex*)ro_arr, &i, &i, descA0,
+				  (double complex*)A, &i, &i, descA, &context);
+		pzgemr2d_(&M_b, &N_b, (double complex*)ro_arr, &i, &i, descB0,
+				  (double complex*)B, &i, &i, descB, &context);
 
-	double tm = MPI_Wtime();
-	if (type == TYPE_REAL) {
-		double alpha = 1.0, beta = 0.0;
-        pdgemm_(&transa, &transb, &M_a, &N_b, &N_a, &alpha, (double*)A, &i, &i, descA,
-                (double*)B, &i, &i, descB, &beta, (double*)C, &i, &i, descC);
+		//if (myrank == 0) {
+		//	printf("НОРМ\n\n");
+		//	print_complex(ro_arr, 1, N);
+		//	}
+		
+		if (curr0 >= 0) Cblacs_gridexit(curr0);  
 
+		MPI_Barrier(MPI_COMM_WORLD);
+
+		char transa = 'N', transb = 'N';
+
+		double tm = MPI_Wtime();
+		double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
+		pzgemm_(&transa, &transb, &M_a, &N_b, &N_a, &alpha, (double complex*)A, &i, &i, descA,
+				(double complex*)B, &i, &i, descB, &beta, (double complex*)ro_local, &i, &i, descRo);
+
+		MPI_Barrier(MPI_COMM_WORLD);
+		tm = MPI_Wtime() - tm;
+
+		
+		
+	}
+	else if (mode == 2) { 
+		// TODO!!!!
 	}
 	else {
-        double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
-        pzgemm_(&transa, &transb, &M_a, &N_b, &N_a, &alpha, (double complex*)A, &i, &i, descA,
-                (double complex*)B, &i, &i, descB, &beta, (double complex*)C, &i, &i, descC);
-    }
+		ro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+		int k = 0;
+		if (myrank == 0) {
+			k = (int)creal(ro_arr[0]); 
+		}
+		
+		MPI_Bcast(&k, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    tm = MPI_Wtime() - tm;
-    if (myrank == 0) printf("time = %lf\n", tm);
+		int i_global = k + 1;
+		int j_global = k + 1;
+		int lrindx, lcindx; 
+		int rsrc, csrc; 
 
-	// double *c_full = NULL;
+		infog2l_(&i_global, &j_global, descRo, 
+		         &nprow, &npcol, &myrow, &mycol, 
+		         &lrindx, &lcindx, &rsrc, &csrc);
 
-	if (curr0 < 0) {
-		descC0[1] = -1;
-	}
-    MPI_Barrier(MPI_COMM_WORLD);
-	if (type == TYPE_REAL) {
-        pdgemr2d_(&M_a, &N_b, (double*)C, &i, &i, descC,
-                  (double*)c_full, &i, &i, descC0, &context);
-    } else {
-        pzgemr2d_(&M_a, &N_b, (double complex*)C, &i, &i, descC,
-                  (double complex*)c_full, &i, &i, descC0, &context);
-    }
+		if (myrow == rsrc && mycol == csrc) {
+			int local_i = lrindx - 1;
+			int local_j = lcindx - 1;
+			
+			int local_index = local_i + local_j * lld;
+			ro_local[local_index] = 1.0 + 0.0 * I;
+		}
+		}
+	if (myrank == 0) free(ro_arr);
 
-	//pdgemr2d_(&M_a, &N_b, C, &i, &i, descC, c_full, &i, &i, descC0, &context);
+	if (myrank == 0) {
+			printf("=== Local part of ro_local on Rank 0 ===\n");
+			if (local_cols > 0 && lld > 0) {
+				print_complex(ro_local, lld, local_cols);
+			} else {
+				printf("Rank 0 has no columns allocated.\n");
+			}
+			printf("========================================\n");
+		}
+	
+	
+	if (ro_local != NULL) free(ro_local);
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
-	fflush(stdout);
-    if (myrank == 0 && pr) {
-        printf("=== Full C ===\n");
-        if (type == TYPE_REAL)
-			print_real((double*)c_full, M_a, N_b);
-        else
-			print_complex((double complex*)c_full, M_a, N_b);
-        free(c_full);
-    }
-
-	fflush(stdout);
-
-	free( A );
-	free( B );
-	free( C );
-
-	if (curr0 >= 0) Cblacs_gridexit(curr0);
 	Cblacs_gridexit(context);
 	Cblacs_exit(0);
 	// MPI_Finalize();
