@@ -9,7 +9,7 @@
 Компиляция:
 
 `
-mpicc -o program.x task1.c -ldl -lm -L$HOME/scalapack-install/lib -lscalapack -llapack -lblas -lg
+mpicc -o program.x task1.c -ldl -lm -L$HOME/scalapack-install/lib -lscalapack -llapack -lblas -lgfortran
 `
 
 Запуск:
@@ -35,5 +35,6 @@ mpirun -np 4 ./program.x 4 mro.bin 0.1 test_H.bin 1
   - Матрица в bin файле, читается распределенно как и матрица H через функцию `pz_read_matrix_binary`
 - Загрузка матрицы H распределенно через функцию `pz_read_matrix_binary`
 - Вывод Abs(Diag(ro(t)) через функцию `print_abs_diag`
+- Начало цикла для метода Эйлера +  перемножение матриц ro * H и H * ro
 
 Пока все

@@ -48,42 +48,6 @@ extern int  indxl2g_(int *indxloc, int *nb, int *iproc, int *isrcproc,
                      int *nprocs);
 
 
-
-void gen(double *arr, long int n) {
-    for (long int i = 0; i < n; i++) {
-        arr[i] = (int)(rand() % 10);
-    }
-}
-
-void gen_complex(double complex *arr, long int n) {
-    for (long int i = 0; i < n; i++)
-        arr[i] = (rand() % 10) + I * (rand() % 10);
-}
-
-void gen_ones(double *arr, int mloc, int nloc, double num) {
-    for (int j = 0; j < nloc; j++) {
-        for (int i = 0; i < mloc; i++) {
-            if (i == j) {
-                arr[i + j * mloc] = num;
-            } else {
-                arr[i + j * mloc] = 0.0;
-            }
-        }
-    }
-}
-
-void gen_ones_complex(double complex *arr, int m, int n, double complex v) {
-    for (int j = 0; j < n; j++)
-        for (int i = 0; i < m; i++)
-            arr[i + j*m] = (i == j) ? v : 0.0;
-}
-
-void print_real(const double *arr, int m, int n) {
-    for (int i = 0; i < m; i++) {
-        for (int j = 0; j < n; j++) printf("%f ", arr[i + j*m]);
-        printf("\n");
-    }
-}
 void print_complex(const double complex *arr, int m, int n) {
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < n; j++) {
@@ -254,7 +218,6 @@ int main(int argc, char **argv)
 	double dT = strtod(argv[3], &end);
 	char * file_H = argv[4];
 	int n = atoi(argv[5]);
-	int step = 0;
 	
 	
 	
@@ -452,16 +415,40 @@ int main(int argc, char **argv)
 		printf("========================================\n");
 	}
 	
-	print_abs_diag(N, ro_local, lld, descRo, step, dT, myrank);
+	
+	
+	print_abs_diag(N, ro_local, lld, descRo, 0, dT, myrank); // для 0 шага
+	
+	double complex * Hro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+	double complex * roH_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+	
+	char transa = 'N', transb = 'N';
+    double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
+    int ione  = 1;
+	
+	for (int i = 0; i < n; i ++) {
+		pzgemm_(&transa, &transb, &N, &N, &N, &alpha, local_H, &ione, &ione, descRo, 
+				ro_local, &ione, &ione, descRo, &beta, 
+				Hro_local, &ione, &ione, descRo);
+		
+		pzgemm_(&transa, &transb, &N, &N, &N, &alpha, ro_local, &ione, &ione, descRo, 
+				local_H, &ione, &ione, descRo, &beta, 
+				roH_local, &ione, &ione, descRo);
+		
+		print_abs_diag(N, ro_local, lld, descRo, i + 1, dT * (1 + i), myrank);
+		
+	}
 	
 	MPI_Barrier(MPI_COMM_WORLD);
 	time1 = MPI_Wtime() - time1;
 	if (myrank == 0){
-		printf("ВРЕМЯ ВЫПОЛНЕНИЯ %f", time1);
+		printf("\nВРЕМЯ ВЫПОЛНЕНИЯ %f\n\n", time1);
 		fflush(stdout);
 		}
 	if (ro_local != NULL) free(ro_local);
 	if (local_H != NULL) free(local_H);
+	if (Hro_local != NULL) free(Hro_local);
+	if (roH_local != NULL) free(roH_local);
 
 	Cblacs_gridexit(context);
 	Cblacs_exit(0);
