@@ -95,17 +95,62 @@ void print_complex(const double complex *arr, int m, int n) {
 }
 
 
-void read_H(FILE *f, double complex *arr, int N){
+void mult_ab(double complex * A, double complex * B, double complex * C, int M_a, int N_a, int N_b, int * descA, int * descB, int * descC, int info){
+	char transa = 'N', transb = 'N';
+    double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
+    int i  = 1;
+    int M_b = N_a;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    pzgemm_(&transa, &transb, &M_a, &N_b, &N_a, &alpha, (double complex*)A, &i, &i, descA,
+            (double complex*)B, &i, &i, descB, &beta, (double complex*)C, &i, &i, descC);
+    MPI_Barrier(MPI_COMM_WORLD);
+
+	}
+	
+void print_abs_diag(int N, double complex *ro, int lld, int *descRo, 
+                    int step, double dT, int myrank) 
+{
+    int nprow, npcol, myrow, mycol;
+    int ictxt = descRo[1];
+    Cblacs_gridinfo(ictxt, &nprow, &npcol, &myrow, &mycol);
+
+    double *local_diag = (double*)calloc(N, sizeof(double));
+    
     for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N; ++j) {
-            double complex z;
-            fread(&z, sizeof(double complex), 1, f);
-            arr[j * N + i] = z;
+        int i_1based = i + 1;
+        int lrindx, lcindx, rsrc, csrc;
+        
+        infog2l_(&i_1based, &i_1based, descRo, &nprow, &npcol, &myrow, &mycol, 
+                 &lrindx, &lcindx, &rsrc, &csrc); //глобальный элемент (i, i)
+                 
+        if (myrow == rsrc && mycol == csrc) {
+            int local_idx = (lrindx - 1) + (lcindx - 1) * lld;
+            // модуль
+            local_diag[i] = cabs(ro[local_idx]);
         }
     }
+    
+    double *global_diag = NULL;
+    if (myrank == 0) {
+        global_diag = (double*)malloc(N * sizeof(double));
+    }
+    
+    MPI_Reduce(local_diag, global_diag, N, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    
+    if (myrank == 0) {
+        printf("Step %d (t = %.4f): ", step, step * dT);
+        for (int i = 0; i < N; ++i) {
+            printf("%.6f ", global_diag[i]);
+        }
+        printf("\n");
+        fflush(stdout);
+        
+        free(global_diag);
+    }
+    
+    free(local_diag);
 }
-
-
 
 void read_ro(FILE *f, double complex *arr, int N, int type){
 	double x, y;
@@ -148,20 +193,6 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 	}
 }
 
-
-void mult_ab(double complex * A, double complex * B, double complex * C, int M_a, int N_a, int N_b, int * descA, int * descB, int * descC, int info){
-	char transa = 'N', transb = 'N';
-    double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
-    int i  = 1;
-    int M_b = N_a;
-    
-    MPI_Barrier(MPI_COMM_WORLD);
-    pzgemm_(&transa, &transb, &M_a, &N_b, &N_a, &alpha, (double complex*)A, &i, &i, descA,
-            (double complex*)B, &i, &i, descB, &beta, (double complex*)C, &i, &i, descC);
-    MPI_Barrier(MPI_COMM_WORLD);
-	
-	}
-	
 	
 	
 int pz_read_matrix_binary(const char *filename,
@@ -223,6 +254,8 @@ int main(int argc, char **argv)
 	double dT = strtod(argv[3], &end);
 	char * file_H = argv[4];
 	int n = atoi(argv[5]);
+	int step = 0;
+	
 	
 	
 	int zero = 0;
@@ -253,6 +286,7 @@ int main(int argc, char **argv)
 	}
 	MPI_Bcast(&mode, 1, MPI_INT, 0, MPI_COMM_WORLD);
 	
+	double time1 = MPI_Wtime();
 	double complex * ro_arr = NULL;
 	
 	if ((myrank == 0) && (mode < 2)) {
@@ -404,9 +438,30 @@ int main(int argc, char **argv)
 			}
 			printf("========================================\n");
 		}
+		
+	double complex * local_H = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+	pz_read_matrix_binary(file_H, N, N, mb, nb, local_H, lld, context);
 	
+	if (myrank == 0) {
+		printf("=== Local part of local_H on Rank 0 ===\n");
+		if (local_cols > 0 && lld > 0) {
+			print_complex(local_H, lld, local_cols);
+		} else {
+			printf("Rank 0 has no columns allocated.\n");
+		}
+		printf("========================================\n");
+	}
 	
+	print_abs_diag(N, ro_local, lld, descRo, step, dT, myrank);
+	
+	MPI_Barrier(MPI_COMM_WORLD);
+	time1 = MPI_Wtime() - time1;
+	if (myrank == 0){
+		printf("ВРЕМЯ ВЫПОЛНЕНИЯ %f", time1);
+		fflush(stdout);
+		}
 	if (ro_local != NULL) free(ro_local);
+	if (local_H != NULL) free(local_H);
 
 	Cblacs_gridexit(context);
 	Cblacs_exit(0);
