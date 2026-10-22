@@ -44,6 +44,8 @@ extern void pzgerc_(int *m, int *n, double complex *alpha,
 extern void infog2l_(int *grindx, int *gcindx, int *desc, 
                      int *nprow, int *npcol, int *myrow, int *mycol, 
                      int *lrindx, int *lcindx, int *rsrc, int *csrc);
+extern int  indxl2g_(int *indxloc, int *nb, int *iproc, int *isrcproc,
+                     int *nprocs);
 
 
 
@@ -160,6 +162,52 @@ void mult_ab(double complex * A, double complex * B, double complex * C, int M_a
 	
 	}
 	
+	
+	
+int pz_read_matrix_binary(const char *filename,
+                          int M, int N,
+                          int MB, int NB,
+                          double _Complex *local_a, int lld,
+                          int ictxt)
+{
+    int nprow, npcol, myprow, mypcol;
+    Cblacs_gridinfo(ictxt, &nprow, &npcol, &myprow, &mypcol);
+
+    if (myprow < 0 || mypcol < 0) return 0;
+
+    int zero = 0;
+    int locr = numroc_(&M, &MB, &myprow, &zero, &nprow);
+    int locc = numroc_(&N, &NB, &mypcol, &zero, &npcol);
+    if (locr == 0 || locc == 0) return 0;
+
+    FILE *fp = fopen(filename, "rb");
+    if (!fp) return -1;
+
+    const size_t esz = sizeof(double _Complex);
+
+    for (int jl = 0; jl < locc; ++jl) {
+		int jl1 = jl + 1;
+        int jg = indxl2g_(&jl1, &NB, &mypcol, &zero, &npcol) - 1;
+
+        for (int il = 0; il < locr; ++il) {
+			int il1 = il + 1;
+            int ig = indxl2g_(&il1, &MB, &myprow, &zero, &nprow) - 1;
+
+            long offset = ((long)jg * (long)M + (long)ig) * (long)esz;
+
+            if (fseek(fp, offset, SEEK_SET) != 0) { fclose(fp); return -2; }
+            if (fread(&local_a[il + jl * lld], esz, 1, fp) != 1) {
+                fclose(fp); return -3;
+            }
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+
+
+
 
 
 int main(int argc, char **argv)
@@ -310,6 +358,14 @@ int main(int argc, char **argv)
 	}
 	else if (mode == 2) { 
 		// TODO!!!!
+		//int locc = numroc_(&N, &NB, &mypcol, &zero_, &npcol);
+		//double _Complex *b = malloc(sizeof(double _Complex) * lld * locc);
+		if (myrank == 0)
+			printf("MODE 2");
+		ro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+
+		int rc = pz_read_matrix_binary(file_ro, N, N, mb, nb, ro_local, lld, context);
+		// fprintf(stderr, "[rank %d] rc = %d\n", myrank, rc);
 	}
 	else {
 		ro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
