@@ -422,42 +422,40 @@ int main(int argc, char **argv)
 	
 	
 	print_abs_diag(N, ro_local, lld, descRo, 0, dT, myrank); // для 0 шага
-	
-	double complex * Hro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
-	double complex * roH_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
-	
-	char transa = 'N', transb = 'N';
-    double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
+    
+    double complex * Hro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+    double complex * roH_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
+    
+    char transa = 'N', transb = 'N';
+    double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I; // beta=0 для pzgemm_
+    double complex beta_one = 1.0 + 0.0*I;                  // beta=1 для pzgeadd_
     int ione  = 1;
-	double complex alpha1 = -I * dT; 
-	double complex alpha2 =  I * dT; 
-
+    double complex alpha1 = -I * dT; 
+    double complex alpha2 =  I * dT; 
 	
 	
-	for (int i = 0; i < n; i ++) {
-		pzgemm_(&transa, &transb, &N, &N, &N, &alpha, local_H, &ione, &ione, descRo, 
-				ro_local, &ione, &ione, descRo, &beta, 
-				Hro_local, &ione, &ione, descRo);
-		
-		pzgemm_(&transa, &transb, &N, &N, &N, &alpha, ro_local, &ione, &ione, descRo, 
-				local_H, &ione, &ione, descRo, &beta, 
-				roH_local, &ione, &ione, descRo);
-		
-		
-				/* ro_local := (-i*dT)*Hro_local + 1*ro_local */
-		/* ro_local := (+i*dT)*roH_local + 1*ro_local */
+	for (int step = 0; step < n; step++) {
+        // 1. Hro_local = H * ro_local
+        pzgemm_(&transa, &transb, &N, &N, &N, &alpha, local_H, &ione, &ione, descRo, 
+                ro_local, &ione, &ione, descRo, &beta, 
+                Hro_local, &ione, &ione, descRo);
+        
+        // 2. roH_local = ro_local * H
+        pzgemm_(&transa, &transb, &N, &N, &N, &alpha, ro_local, &ione, &ione, descRo, 
+                local_H, &ione, &ione, descRo, &beta, 
+                roH_local, &ione, &ione, descRo);
+        
+        // 3. ro_local = ro_local + (-i*dT) * Hro_local
+        pzgeadd_("N", &N, &N, &alpha1, Hro_local, &ione, &ione, descRo, 
+                 &beta_one, ro_local, &ione, &ione, descRo);
 
-
-		pzgeadd_("N", &N, &N, &alpha1, Hro_local, &ione, &ione, descRo, 
-				 &beta, ro_local, &ione, &ione, descRo);
-
-		pzgeadd_("N", &N, &N, &alpha2, roH_local, &ione, &ione, descRo, 
-				 &beta, ro_local, &ione, &ione, descRo);
-				
-		
-		print_abs_diag(N, ro_local, lld, descRo, i + 1, dT * (1 + i), myrank);
-		
-	}
+        // 4. ro_local = ro_local + (+i*dT) * roH_local
+        pzgeadd_("N", &N, &N, &alpha2, roH_local, &ione, &ione, descRo, 
+                 &beta_one, ro_local, &ione, &ione, descRo);
+                
+        // Печатаем время как (step+1)*dT, передавая в функцию просто dT
+        print_abs_diag(N, ro_local, lld, descRo, step + 1, dT, myrank);
+    }
 	
 	MPI_Barrier(MPI_COMM_WORLD);
 	time1 = MPI_Wtime() - time1;
