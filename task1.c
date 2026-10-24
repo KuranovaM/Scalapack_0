@@ -46,6 +46,11 @@ extern void infog2l_(int *grindx, int *gcindx, int *desc,
                      int *lrindx, int *lcindx, int *rsrc, int *csrc);
 extern int  indxl2g_(int *indxloc, int *nb, int *iproc, int *isrcproc,
                      int *nprocs);
+extern void pzgeadd_(const char* trans, const int* m, const int* n, 
+                     const double complex* alpha, const double complex* A, 
+                     const int* ia, const int* ja, const int* desca, 
+                     const double complex* beta, double complex* C, 
+                     const int* ic, const int* jc, const int* descc);
 
 
 void print_complex(const double complex *arr, int m, int n) {
@@ -354,7 +359,6 @@ int main(int argc, char **argv)
 		
 	}
 	else if (mode == 2) { 
-		// TODO!!!!
 		//int locc = numroc_(&N, &NB, &mypcol, &zero_, &npcol);
 		//double _Complex *b = malloc(sizeof(double _Complex) * lld * locc);
 		if (myrank == 0)
@@ -425,6 +429,10 @@ int main(int argc, char **argv)
 	char transa = 'N', transb = 'N';
     double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
     int ione  = 1;
+	double complex alpha1 = -I * dT; 
+	double complex alpha2 =  I * dT; 
+
+	
 	
 	for (int i = 0; i < n; i ++) {
 		pzgemm_(&transa, &transb, &N, &N, &N, &alpha, local_H, &ione, &ione, descRo, 
@@ -434,6 +442,18 @@ int main(int argc, char **argv)
 		pzgemm_(&transa, &transb, &N, &N, &N, &alpha, ro_local, &ione, &ione, descRo, 
 				local_H, &ione, &ione, descRo, &beta, 
 				roH_local, &ione, &ione, descRo);
+		
+		
+				/* ro_local := (-i*dT)*Hro_local + 1*ro_local */
+		/* ro_local := (+i*dT)*roH_local + 1*ro_local */
+
+
+		pzgeadd_("N", &N, &N, &alpha1, Hro_local, &ione, &ione, descRo, 
+				 &beta, ro_local, &ione, &ione, descRo);
+
+		pzgeadd_("N", &N, &N, &alpha2, roH_local, &ione, &ione, descRo, 
+				 &beta, ro_local, &ione, &ione, descRo);
+				
 		
 		print_abs_diag(N, ro_local, lld, descRo, i + 1, dT * (1 + i), myrank);
 		
