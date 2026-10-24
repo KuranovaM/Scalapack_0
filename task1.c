@@ -283,6 +283,12 @@ int main(int argc, char **argv)
 	MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 	MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
 	
+    if (argc < 6) {
+        if (myrank == 0) printf("Usage: %s N file_ro dT file_H n\n", argv[0]);
+        MPI_Finalize();
+        return 1;
+    }
+	
 	int N = atoi(argv[1]);
 	char * file_ro = argv[2];
 	char *end;
