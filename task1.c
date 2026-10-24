@@ -427,7 +427,7 @@ int main(int argc, char **argv)
 		tm = MPI_Wtime() - tm;
 
 		
-		
+		free(A); free(B);
 	}
 	
 	else if (mode == 2) { 
