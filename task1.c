@@ -51,6 +51,17 @@ extern void pzgeadd_(const char* trans, const int* m, const int* n,
                      const int* ia, const int* ja, const int* desca, 
                      const double complex* beta, double complex* C, 
                      const int* ic, const int* jc, const int* descc);
+                     
+extern void pzheev_(const char* jobz, const char* uplo, const int* n, 
+                    double complex* a, const int* ia, const int* ja, const int* desca, 
+                    double* w, double complex* z, const int* iz, const int* jz, 
+                    const int* descz, double complex* work, const int* lwork, 
+                    double* rwork, const int* lrwork, int* info);
+
+extern void pztranc_(const int* m, const int* n, const double complex* alpha, 
+                     const double complex* a, const int* ia, const int* ja, const int* desca, 
+                     const double complex* beta, double complex* c, const int* ic, const int* jc, 
+                     const int* descc);
 
 
 void print_complex(const double complex *arr, int m, int n) {
@@ -137,21 +148,23 @@ void read_ro(FILE *f, double complex *arr, int N, int type){
 		}*/
 
 		case 1: {
-			for (int i = 0; i < N; i ++){
-				fscanf(f, "%lf %lf", &x, &y);    
-				arr[i] = x + I * y;
+			for (int i = 0; i < N; i++) {
+				if (fread(&arr[i], sizeof(double complex), 1, f) != 1) {
+					fprintf(stderr, "read_ro: ошибка чтения вектора\n");
+					exit(EXIT_FAILURE);
 				}
-
+			}
 			break;
 		}
 
 		case 0: {
 			int k;
-			fscanf(f, "%d", &k); 
-			//for (int i = 0; i < N * N; i ++) {
-			//	arr[i] = 0;
-			//	}
-			arr[0] = k + I * 0;
+			// Читаем ровно sizeof(int) байт
+			if (fread(&k, sizeof(int), 1, f) != 1) {
+				fprintf(stderr, "read_ro: ошибка чтения номера состояния\n");
+				exit(EXIT_FAILURE);
+			}
+			arr[0] = k + 0.0 * I; // сохраняем в arr[0] как комплексное число
 			break;
 		}
 
@@ -207,7 +220,60 @@ int pz_read_matrix_binary(const char *filename,
 
 
 
+int pz_read_matrix_binary_mpiio(const char *filename, int M, int N, int MB, int NB,
+                                 double complex *local_a, int lld, int ictxt)
+{
+    int nprow, npcol, myprow, mypcol;
+    Cblacs_gridinfo(ictxt, &nprow, &npcol, &myprow, &mypcol);
 
+    int in_grid = (myprow >= 0 && mypcol >= 0);
+    int zero = 0;
+    int locr = in_grid ? numroc_(&M, &MB, &myprow, &zero, &nprow) : 0;
+    int locc = in_grid ? numroc_(&N, &NB, &mypcol, &zero, &npcol) : 0;
+    int count = locr * locc;
+
+    MPI_Datatype filetype;
+    if (count == 0) {
+        MPI_Type_contiguous(1, MPI_C_DOUBLE_COMPLEX, &filetype);
+    } else {
+        int gsizes[2]     = {M, N};
+        int distribs[2]   = {MPI_DISTRIBUTE_CYCLIC, MPI_DISTRIBUTE_CYCLIC};
+        int dargs[2]      = {MB, NB};
+        int psizes[2]     = {nprow, npcol};
+        int blacs_rank    = myprow * npcol + mypcol;
+
+        MPI_Type_create_darray(nprow * npcol, blacs_rank, 2,
+                               gsizes, distribs, dargs, psizes,
+                               MPI_ORDER_FORTRAN, MPI_C_DOUBLE_COMPLEX, &filetype);
+    }
+    MPI_Type_commit(&filetype);
+
+    MPI_File fh;
+    if (MPI_File_open(MPI_COMM_WORLD, filename, MPI_MODE_RDONLY, MPI_INFO_NULL, &fh) != MPI_SUCCESS) {
+        MPI_Type_free(&filetype);
+        return -1;
+    }
+
+    MPI_File_set_view(fh, 0, MPI_C_DOUBLE_COMPLEX, filetype, "native", MPI_INFO_NULL);
+
+    if (count == 0 || lld == locr) {
+        MPI_Status status;
+        MPI_File_read_at_all(fh, 0, local_a, count, MPI_C_DOUBLE_COMPLEX, &status);
+    } else {
+        // На случай, если lld > locr (padding)
+        double complex *compact = (double complex*)malloc(count * sizeof(double complex));
+        MPI_Status status;
+        MPI_File_read_at_all(fh, 0, compact, count, MPI_C_DOUBLE_COMPLEX, &status);
+        for (int j = 0; j < locc; ++j)
+            for (int i = 0; i < locr; ++i)
+                local_a[i + j*lld] = compact[i + j*locr];
+        free(compact);
+    }
+
+    MPI_File_close(&fh);
+    MPI_Type_free(&filetype);
+    return 0;
+}
 
 
 int main(int argc, char **argv)
@@ -259,7 +325,7 @@ int main(int argc, char **argv)
 	
 	if ((myrank == 0) && (mode < 2)) {
 		ro_arr = (double complex *) malloc(sizeof(double complex) * N * N);
-		FILE *f = fopen(file_ro, "r");
+		FILE *f = fopen(file_ro, "rb");
 		if (f == NULL) {
 			printf("Не удалось открыть %s: %s\n", file_ro, strerror(errno));
 			return -1;
@@ -335,6 +401,11 @@ int main(int argc, char **argv)
 				  (double complex*)A, &i, &i, descA, &context);
 		pzgemr2d_(&M_b, &N_b, (double complex*)ro_arr, &i, &i, descB0,
 				  (double complex*)B, &i, &i, descB, &context);
+				  
+		for (int jj = 0; jj < nloc_B; ++jj)
+            for (int ii = 0; ii < mloc_B; ++ii)
+                ((double complex*)B)[ii + jj * lld_B] =
+                    conj(((double complex*)B)[ii + jj * lld_B]);
 
 		//if (myrank == 0) {
 		//	printf("НОРМ\n\n");
@@ -358,6 +429,7 @@ int main(int argc, char **argv)
 		
 		
 	}
+	
 	else if (mode == 2) { 
 		//int locc = numroc_(&N, &NB, &mypcol, &zero_, &npcol);
 		//double _Complex *b = malloc(sizeof(double _Complex) * lld * locc);
@@ -365,7 +437,7 @@ int main(int argc, char **argv)
 			printf("MODE 2");
 		ro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
 
-		int rc = pz_read_matrix_binary(file_ro, N, N, mb, nb, ro_local, lld, context);
+		int rc = pz_read_matrix_binary_mpiio(file_ro, N, N, mb, nb, ro_local, lld, context);
 		// fprintf(stderr, "[rank %d] rc = %d\n", myrank, rc);
 	}
 	else {
@@ -407,7 +479,7 @@ int main(int argc, char **argv)
 		}
 		
 	double complex * local_H = (double complex *)calloc(lld * local_cols, sizeof(double complex));
-	pz_read_matrix_binary(file_H, N, N, mb, nb, local_H, lld, context);
+	pz_read_matrix_binary_mpiio(file_H, N, N, mb, nb, local_H, lld, context);
 	
 	if (myrank == 0) {
 		printf("=== Local part of local_H on Rank 0 ===\n");
@@ -420,42 +492,82 @@ int main(int argc, char **argv)
 	}
 	
 	
-	
-	print_abs_diag(N, ro_local, lld, descRo, 0, dT, myrank); // для 0 шага
-    
-    double complex * Hro_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
-    double complex * roH_local = (double complex *)calloc(lld * local_cols, sizeof(double complex));
-    
-    char transa = 'N', transb = 'N';
-    double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I; // beta=0 для pzgemm_
-    double complex beta_one = 1.0 + 0.0*I;                  // beta=1 для pzgeadd_
-    int ione  = 1;
-    double complex alpha1 = -I * dT; 
-    double complex alpha2 =  I * dT; 
-	
-	
-	for (int step = 0; step < n; step++) {
-        // 1. Hro_local = H * ro_local
-        pzgemm_(&transa, &transb, &N, &N, &N, &alpha, local_H, &ione, &ione, descRo, 
-                ro_local, &ione, &ione, descRo, &beta, 
-                Hro_local, &ione, &ione, descRo);
-        
-        // 2. roH_local = ro_local * H
-        pzgemm_(&transa, &transb, &N, &N, &N, &alpha, ro_local, &ione, &ione, descRo, 
-                local_H, &ione, &ione, descRo, &beta, 
-                roH_local, &ione, &ione, descRo);
-        
-        // 3. ro_local = ro_local + (-i*dT) * Hro_local
-        pzgeadd_("N", &N, &N, &alpha1, Hro_local, &ione, &ione, descRo, 
-                 &beta_one, ro_local, &ione, &ione, descRo);
+    // ==========================================================
+    print_abs_diag(N, ro_local, lld, descRo, 0, dT, myrank);
 
-        // 4. ro_local = ro_local + (+i*dT) * roH_local
-        pzgeadd_("N", &N, &N, &alpha2, roH_local, &ione, &ione, descRo, 
-                 &beta_one, ro_local, &ione, &ione, descRo);
-                
-        // Печатаем время как (step+1)*dT, передавая в функцию просто dT
+    char jobz = 'V', uplo = 'L';
+    int ione = 1, info_heev = 0;
+    double *eigvals = (double*)malloc(N * sizeof(double));
+
+    // pzheev: A - вход (разрушается), Q - выход (собственные векторы)
+    double complex *A_heev = (double complex*)malloc(lld * local_cols * sizeof(double complex));
+    memcpy(A_heev, local_H, lld * local_cols * sizeof(double complex));
+    double complex *Q = (double complex*)calloc(lld * local_cols, sizeof(double complex));
+
+    int lwork = -1, lrwork = -1;
+    double complex work_query;
+    double rwork_query;
+    pzheev_(&jobz, &uplo, &N, A_heev, &ione, &ione, descRo, eigvals,
+            Q, &ione, &ione, descRo, &work_query, &lwork,
+            &rwork_query, &lrwork, &info_heev);
+    if (info_heev != 0) { printf("pzheev query failed: %d\n", info_heev); return -1; }
+
+    lwork = (int)creal(work_query);
+    lrwork = (int)rwork_query;
+    double complex *work = (double complex*)malloc(lwork * sizeof(double complex));
+    double *rwork = (double*)malloc(lrwork * sizeof(double));
+
+    pzheev_(&jobz, &uplo, &N, A_heev, &ione, &ione, descRo, eigvals,
+            Q, &ione, &ione, descRo, work, &lwork,
+            rwork, &lrwork, &info_heev);
+    if (info_heev != 0) { printf("pzheev failed: %d\n", info_heev); return -1; }
+    free(A_heev); free(work); free(rwork);
+
+    double complex alpha = 1.0 + 0.0*I, beta = 0.0 + 0.0*I;
+
+    // U_step = Q * exp(-i*Lambda*dT)
+    double complex *U_step = (double complex*)malloc(lld * local_cols * sizeof(double complex));
+    memcpy(U_step, Q, lld * local_cols * sizeof(double complex));
+    for (int j = 0; j < local_cols; ++j) {
+        int j1 = j + 1;
+        int jg = indxl2g_(&j1, &nb, &mycol, &zero, &npcol) - 1;
+        double complex mult = cexp(-I * eigvals[jg] * dT);
+        for (int ii = 0; ii < lld; ++ii) U_step[ii + j*lld] *= mult;
+    }
+
+    // QH = Q^H
+    double complex *I_mat = (double complex*)calloc(lld * local_cols, sizeof(double complex));
+    for (int j = 0; j < local_cols; ++j) {
+        int j1 = j + 1;
+        int jg = indxl2g_(&j1, &nb, &mycol, &zero, &npcol) - 1;
+        for (int ii = 0; ii < local_rows; ++ii) {
+            int i1 = ii + 1;
+            int ig = indxl2g_(&i1, &mb, &myrow, &zero, &nprow) - 1;
+            if (ig == jg) I_mat[ii + j*lld] = 1.0;
+        }
+    }
+    double complex *QH = (double complex*)calloc(lld * local_cols, sizeof(double complex));
+    pzgemm_("N", "C", &N, &N, &N, &alpha, I_mat, &ione, &ione, descRo,
+            Q, &ione, &ione, descRo, &beta, QH, &ione, &ione, descRo);
+    free(I_mat);
+
+    // U_step = U_step * QH
+    double complex *temp = (double complex*)calloc(lld * local_cols, sizeof(double complex));
+    pzgemm_("N", "N", &N, &N, &N, &alpha, U_step, &ione, &ione, descRo,
+            QH, &ione, &ione, descRo, &beta, temp, &ione, &ione, descRo);
+    memcpy(U_step, temp, lld * local_cols * sizeof(double complex));
+
+    // rho(t+dt) = U_step * rho(t) * U_step^H
+    for (int step = 0; step < n; ++step) {
+        pzgemm_("N", "N", &N, &N, &N, &alpha, U_step, &ione, &ione, descRo,
+                ro_local, &ione, &ione, descRo, &beta, temp, &ione, &ione, descRo);
+        pzgemm_("N", "C", &N, &N, &N, &alpha, temp, &ione, &ione, descRo,
+                U_step, &ione, &ione, descRo, &beta, ro_local, &ione, &ione, descRo);
         print_abs_diag(N, ro_local, lld, descRo, step + 1, dT, myrank);
     }
+
+    free(Q); free(eigvals); free(U_step); free(QH); free(temp);
+    // ==========================================================
 	
 	MPI_Barrier(MPI_COMM_WORLD);
 	time1 = MPI_Wtime() - time1;
@@ -465,8 +577,6 @@ int main(int argc, char **argv)
 		}
 	if (ro_local != NULL) free(ro_local);
 	if (local_H != NULL) free(local_H);
-	if (Hro_local != NULL) free(Hro_local);
-	if (roH_local != NULL) free(roH_local);
 
 	Cblacs_gridexit(context);
 	Cblacs_exit(0);
